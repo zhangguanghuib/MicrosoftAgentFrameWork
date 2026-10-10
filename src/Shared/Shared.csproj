@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="AgentFrameworkToolkit.Anthropic" />
+    <PackageReference Include="Azure.Identity" />
     <PackageReference Include="JetBrains.Annotations" />
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" />
     <PackageReference Include="Microsoft.Agents.AI" />
@@ -21,4 +22,3 @@
   </ItemGroup>
 
 </Project>
-

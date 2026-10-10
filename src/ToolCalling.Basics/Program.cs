@@ -17,16 +17,38 @@ Secrets secrets = SecretsManager.GetSecrets();
 
 OpenAIClient client = ClientHelper.GetAzureOpenAIClient();
 
+//ChatClientAgent agent = client
+//    .GetChatClient("gpt-4.1")
+//    .AsAIAgent(
+//        instructions: "You are a Time Expert",
+//        tools:
+//        [
+//            AIFunctionFactory.Create(Tools.CurrentDataAndTime, "current_date_and_time"),
+//            AIFunctionFactory.Create(Tools.CurrentTimezone, "current_timezone")
+//        ]
+//    );
+
+#pragma warning disable OPENAI001 // GetResponsesClient is preview API
 ChatClientAgent agent = client
-    .GetChatClient("gpt-4.1")
+    .GetChatClient("gpt-6-sol")
     .AsAIAgent(
-        instructions: "You are a Time Expert",
-        tools:
-        [
-            AIFunctionFactory.Create(Tools.CurrentDataAndTime, "current_date_and_time"),
-            AIFunctionFactory.Create(Tools.CurrentTimezone, "current_timezone")
-        ]
+        new ChatClientAgentOptions
+        {
+            ChatOptions = new ChatOptions
+            {
+                Tools =
+                [
+                    AIFunctionFactory.Create(Tools.CurrentDataAndTime, "current_date_and_time"),
+                    AIFunctionFactory.Create(Tools.CurrentTimezone, "current_timezone")
+                ],
+                RawRepresentationFactory = _ => new ChatCompletionOptions
+                {
+                    ReasoningEffortLevel = ChatReasoningEffortLevel.None
+                }
+            }
+        }
     );
+#pragma warning restore OPENAI001
 
 AgentSession session = await agent.CreateSessionAsync();
 

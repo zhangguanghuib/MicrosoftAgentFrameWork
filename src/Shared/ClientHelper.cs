@@ -1,4 +1,6 @@
 ﻿
+using Azure.Core;
+using Azure.Identity;
 using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Text.Json;
@@ -23,21 +25,70 @@ public static class ClientHelper
     }
 
     public static OpenAIClient GetAzureOpenAIClient(bool showRawCall = false, RawCallOptions? rawCall = null)
+        => GetAzureOpenAIClient(
+            new Uri(SecretsManager.GetSecrets().AzureOpenAiEndpoint),
+            showRawCall,
+            rawCall);
+
+    public static OpenAIClient GetAzureOpenAIClient(
+        Uri endpoint,
+        bool showRawCall = false,
+        RawCallOptions? rawCall = null)
     {
-        (Uri endpoint, ApiKeyCredential apiKey) = SecretsManager.GetAzureOpenAICredentials(true);
-        if (!showRawCall)
+        endpoint = GetOpenAICompatibleEndpoint(endpoint);
+        OpenAIClientOptions options = new()
         {
-            return new OpenAIClient(apiKey, new OpenAIClientOptions
-            {
-                Endpoint = endpoint
-            });
+            Endpoint = endpoint
+        };
+
+        if (showRawCall)
+        {
+            options.Transport = new HttpClientPipelineTransport(
+                new HttpClient(new CustomClientHttpHandler(rawCall ?? new RawCallOptions())));
         }
 
-        return new OpenAIClient(apiKey, new OpenAIClientOptions
+        Secrets secrets = SecretsManager.GetSecrets();
+        if (!string.IsNullOrWhiteSpace(secrets.AzureOpenAiKey))
         {
-            Endpoint = endpoint,
-            Transport = new HttpClientPipelineTransport(new HttpClient(new CustomClientHttpHandler(rawCall ?? new RawCallOptions())))
-        });
+            return new OpenAIClient(new ApiKeyCredential(secrets.AzureOpenAiKey), options);
+        }
+
+        string scope = endpoint.Host.EndsWith(".services.ai.azure.com", StringComparison.OrdinalIgnoreCase)
+            ? "https://ai.azure.com/.default"
+            : "https://cognitiveservices.azure.com/.default";
+
+        DefaultAzureCredentialOptions credentialOptions = new();
+        if (!string.IsNullOrWhiteSpace(secrets.AzureTenantId))
+        {
+            credentialOptions.TenantId = secrets.AzureTenantId;
+        }
+
+        BearerTokenPolicy authenticationPolicy = new(
+            new AzureTokenProvider(new DefaultAzureCredential(credentialOptions), scope),
+            scope);
+
+#pragma warning disable OPENAI001
+        return new OpenAIClient(authenticationPolicy, options);
+#pragma warning restore OPENAI001
+    }
+
+    private static Uri GetOpenAICompatibleEndpoint(Uri endpoint)
+    {
+        const string responsesPath = "/responses";
+        const string openAIV1Path = "/openai/v1";
+
+        string normalizedEndpoint = endpoint.AbsoluteUri.TrimEnd('/');
+        if (normalizedEndpoint.EndsWith(responsesPath, StringComparison.OrdinalIgnoreCase))
+        {
+            normalizedEndpoint = normalizedEndpoint[..^responsesPath.Length];
+        }
+
+        if (!normalizedEndpoint.EndsWith(openAIV1Path, StringComparison.OrdinalIgnoreCase))
+        {
+            normalizedEndpoint += openAIV1Path;
+        }
+
+        return new Uri(normalizedEndpoint + "/");
     }
 
     public class RawCallOptions
@@ -87,6 +138,28 @@ public static class ClientHelper
             {
                 return input;
             }
+        }
+    }
+
+    private sealed class AzureTokenProvider(TokenCredential credential, string scope) : AuthenticationTokenProvider
+    {
+        public override GetTokenOptions CreateTokenOptions(IReadOnlyDictionary<string, object> properties)
+            => new(properties);
+
+        public override AuthenticationToken GetToken(GetTokenOptions options, CancellationToken cancellationToken)
+        {
+            AccessToken token = credential.GetToken(new TokenRequestContext([scope]), cancellationToken);
+            return new AuthenticationToken(token.Token, "Bearer", token.ExpiresOn, null);
+        }
+
+        public override async ValueTask<AuthenticationToken> GetTokenAsync(
+            GetTokenOptions options,
+            CancellationToken cancellationToken)
+        {
+            AccessToken token = await credential.GetTokenAsync(
+                new TokenRequestContext([scope]),
+                cancellationToken);
+            return new AuthenticationToken(token.Token, "Bearer", token.ExpiresOn, null);
         }
     }
 
